@@ -1,0 +1,292 @@
+{
+  "name": "Spotify Review Chatbot",
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "initialMessages": "Ask me what Spotify users are saying about repetitive recommendations, music discovery, and recommendation quality.\n\n(Please allow about 60 seconds between questions. If the service is temporarily busy, wait a minute and try again.)",
+        "options": {
+          "subtitle": "Explore insights from classified Google Play and Reddit reviews.",
+          "title": "Spotify Discovery Research Assistant",
+          "responseMode": "lastNode"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1d72ba8d-f3ec-422c-91fe-3102f1c018ff",
+      "name": "When chat message received",
+      "webhookId": "62fe0202-5fef-43c0-8f2b-2f192c47ed27"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are a product-research assistant analysing public Spotify feedback.\n\nYou must use the spotify_review_search tool before answering any question about:\n- Spotify user complaints\n- music discovery\n- recommendations\n- repetitive listening\n- themes, pain points, or behavioural segments\n- evidence or user quotes\n\nRules:\n\n1. Base findings only on documents returned by the tool.\n2. Never invent reviews, quotes, counts, percentages, or user behaviour.\n3. Clearly distinguish evidence from interpretation.\n4. When evidence is insufficient, say so.\n5. Do not infer demographics such as age, gender, income, or occupation.\n6. Use short exact evidence quotes from the retrieved documents.\n7. Include the source and source URL whenever available.\n8. Do not claim that a theme is the most common unless exact structured counts are available.\n9. The current vector knowledge base contains discovery-related records, not every raw Spotify review. State this limitation when asked about prevalence across all Spotify users.\n10. Keep answers suitable for a product manager.\n11. Do not speculate about Spotify’s internal algorithms, caching, business rules, or technical implementation. If a user review proposes a cause, clearly label it as the user’s hypothesis rather than an established explanation.\n12. Use spotify_review_analytics for:\n- exact counts\n- percentages\n- rankings\n- most common themes\n- source comparisons\n- sentiment, severity, or behavioural-segment totals\n\n13. Use spotify_review_search for:\n- supporting quotes\n- examples\n- qualitative explanations\n- original source URLs\n\n14. When a question asks for both exact numbers and evidence, use both tools.\n\n15. Never calculate totals from vector-search results. Use spotify_review_analytics for numerical claims.\n\n16.Never make claims about sentiment, severity, themes, source distribution, or user behaviour unless the relevant tool returned exact supporting data for that claim. For numerical questions, answer only with the requested metrics, a brief interpretation, and scope.\n\n17.For numerical analytics questions, do not infer satisfaction, attitudes, causes, business impact, or user behaviour unless the tool returned data supporting that claim.\n\nWhen the Spotify Review Analytics Tool is used, describe the scope as the latest completed ingestion run. Do not mention the vector knowledge base unless the Supabase Vector Store was actually used.\n\nIf no supported interpretation is available, omit the Interpretation section rather than inventing one.\nUse this response format:\n\nFinding:\nA concise answer to the question.\n\nEvidence:\n- “Short quote” — Source\n  Original source: URL\n- “Short quote” — Source\n  Original source: URL\n\nInterpretation:\nExplain what the evidence may mean for Spotify’s product experience.\n\nScope:\nState how many retrieved records support the answer when known, and mention any important limitations."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        368,
+        0
+      ],
+      "id": "46a0cec8-b335-4a3a-a3d7-b0490f856aec",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        224
+      ],
+      "id": "233b40c3-3597-49b8-96bc-9ed166639fdf",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "GoeAM3bbEixYWg3F",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Search the stored Spotify reviews and Reddit discussions for evidence relevant to the user’s question. Use this tool before making claims about user complaints, discovery problems, recommendation quality, themes, segments, or supporting quotes.",
+        "tableName": {
+          "__rl": true,
+          "value": "review_documents",
+          "mode": "list",
+          "cachedResultName": "review_documents"
+        },
+        "topK": 10,
+        "options": {
+          "queryName": "match_review_documents"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        352,
+        224
+      ],
+      "id": "b72219e7-ab54-4a78-a5ef-90ec75342934",
+      "name": "Supabase Vector Store",
+      "credentials": {
+        "supabaseApi": {
+          "id": "cTMRwYs8CfDWRqY7",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        432,
+        432
+      ],
+      "id": "ae5f98eb-55ec-4e2c-af7b-b6d49d4e378d",
+      "name": "Embeddings Google Gemini",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "GoeAM3bbEixYWg3F",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Use this tool for exact counts, percentages, rankings, theme frequency, source comparisons, sentiment counts, severity counts, and behavioural-segment counts from the latest completed review-ingestion run.",
+        "workflowId": {
+          "__rl": true,
+          "value": "MNi2ULjgHBLiq655",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/MNi2ULjgHBLiq655",
+          "cachedResultName": "Spotify Review Analytics Tool"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "analysis_request": "={{ $fromAI(   \"analysis_request\",   \"The user's request for exact review counts, percentages, theme rankings, source comparisons, sentiment, severity, or behavioural segment analysis\",   \"string\" ) }}"
+          },
+          "matchingColumns": [
+            "analysis_request"
+          ],
+          "schema": [
+            {
+              "id": "analysis_request",
+              "displayName": "analysis_request",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        224
+      ],
+      "id": "9abc806d-ecb4-4247-89db-1406317da6b3",
+      "name": "Call 'Spotify Review Analytics Tool'"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        32,
+        224
+      ],
+      "id": "2abacc32-2b64-4c9e-b058-3404d9e6c575",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "9qgD56TaluaDtV4b",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-8b-instant",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        224
+      ],
+      "id": "d15ea56f-c705-4b90-8fa7-5cf41ad97863",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "skyCZvnQ1Y6LIhah",
+          "name": "Groq account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "When chat message received": [
+      {
+        "json": {
+          "action": "sendMessage",
+          "sessionId": "053b2184-7785-4214-b55f-81f1247e0aaf",
+          "chatInput": "Which source has stronger discovery complaints: Reddit or Play Store?"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        []
+      ]
+    },
+    "Supabase Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Spotify Review Analytics Tool'": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        []
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "08ca6115-2fa5-4a08-8e10-13eac2baa40f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e1669c7bbd761b891f95f329a3eab179a0dab1b8dccb3ef76bca92e6d5b0a538"
+  },
+  "nodeGroups": [],
+  "id": "x7hcpfYvBNHYXN5K",
+  "tags": []
+}

@@ -1,0 +1,171 @@
+{
+  "name": "Spotify Review Analytics Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "analysis_request"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c6a820be-db54-493d-9709-453529de628d",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "ingestion_runs",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "completed"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ],
+      "id": "dbd533b3-882a-4ee8-8004-561ba739c35e",
+      "name": "Get Completed Runs",
+      "credentials": {
+        "supabaseApi": {
+          "id": "cTMRwYs8CfDWRqY7",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const runs = $input.all().map(item => item.json);\n\nif (runs.length === 0) {\n  throw new Error(\"No completed ingestion runs were found.\");\n}\n\nruns.sort((a, b) => {\n  return new Date(b.completed_at || b.started_at) -\n    new Date(a.completed_at || a.started_at);\n});\n\nconst latestRun = runs[0];\n\nreturn [\n  {\n    json: {\n      analysis_request:\n        $('When Executed by Another Workflow')\n          .first()\n          .json\n          .analysis_request,\n\n      run_id: latestRun.id,\n      completed_at: latestRun.completed_at,\n      raw_record_count: latestRun.raw_record_count,\n      relevant_record_count:\n        latestRun.relevant_record_count,\n      total_stored: latestRun.total_stored\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "233fd439-5f67-4b14-8fa7-d6ec242bc747",
+      "name": "Select Latest Run"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "reviews",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "run_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.run_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        672,
+        0
+      ],
+      "id": "ab818c7d-1d82-4c32-8e03-ec98050b4800",
+      "name": "Get Latest Run Reviews",
+      "credentials": {
+        "supabaseApi": {
+          "id": "cTMRwYs8CfDWRqY7",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.all().map(item => item.json);\nconst latestRun = $('Select Latest Run').first().json;\n\nconst discoveryReviews = reviews.filter(\n  review => review.is_discovery_related === true\n);\n\nfunction countBy(items, field) {\n  return items.reduce((counts, item) => {\n    const value = item[field] || \"unknown\";\n    counts[value] = (counts[value] || 0) + 1;\n    return counts;\n  }, {});\n}\n\nfunction percentage(count, total) {\n  if (!total) return 0;\n  return Number(((count / total) * 100).toFixed(1));\n}\n\nconst sourceCounts = countBy(reviews, \"source\");\nconst discoveryBySource = countBy(\n  discoveryReviews,\n  \"source\"\n);\n\nconst themeCounts = countBy(\n  discoveryReviews,\n  \"primary_theme\"\n);\n\nconst sentimentCounts = countBy(\n  discoveryReviews,\n  \"sentiment\"\n);\n\nconst severityCounts = countBy(\n  discoveryReviews,\n  \"severity\"\n);\n\nconst segmentCounts = countBy(\n  discoveryReviews,\n  \"user_segment\"\n);\n\nconst sourceBreakdown = {};\n\nfor (const source of Object.keys(sourceCounts)) {\n  const total = sourceCounts[source];\n  const relevant = discoveryBySource[source] || 0;\n\n  sourceBreakdown[source] = {\n    total_records: total,\n    discovery_related_records: relevant,\n    discovery_related_percentage:\n      percentage(relevant, total)\n  };\n}\n\nconst topThemes = Object.entries(themeCounts)\n  .map(([theme, count]) => ({\n    theme,\n    count,\n    percentage_of_discovery_records:\n      percentage(count, discoveryReviews.length)\n  }))\n  .sort((a, b) => b.count - a.count);\n\nreturn [\n  {\n    json: {\n      analysis_request:\n        latestRun.analysis_request || null,\n\n      run: {\n        run_id: latestRun.run_id,\n        completed_at: latestRun.completed_at,\n        raw_record_count:\n          latestRun.raw_record_count,\n        total_stored:\n          latestRun.total_stored\n      },\n\n      overview: {\n        total_reviews: reviews.length,\n        classified_reviews: reviews.filter(\n          review =>\n            review.is_discovery_related !== null &&\n            review.is_discovery_related !== undefined\n        ).length,\n        discovery_related_reviews:\n          discoveryReviews.length,\n        discovery_related_percentage:\n          percentage(\n            discoveryReviews.length,\n            reviews.length\n          )\n      },\n\n      source_breakdown: sourceBreakdown,\n      top_themes: topThemes,\n      theme_counts: themeCounts,\n      sentiment_counts: sentimentCounts,\n      severity_counts: severityCounts,\n      behavioral_segment_counts: segmentCounts\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "37fc7b39-5ac9-4b2e-b249-9dac38f43004",
+      "name": "Build Review Analytics"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Get Completed Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Completed Runs": {
+      "main": [
+        [
+          {
+            "node": "Select Latest Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Latest Run": {
+      "main": [
+        [
+          {
+            "node": "Get Latest Run Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Latest Run Reviews": {
+      "main": [
+        [
+          {
+            "node": "Build Review Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b75b2340-b857-4da3-9546-fa75ca236b98",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e1669c7bbd761b891f95f329a3eab179a0dab1b8dccb3ef76bca92e6d5b0a538"
+  },
+  "nodeGroups": [],
+  "id": "MNi2ULjgHBLiq655",
+  "tags": []
+}

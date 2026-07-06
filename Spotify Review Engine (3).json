@@ -1,0 +1,860 @@
+{
+  "name": "Spotify Review Engine",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cc8124a0-7fd5-436b-a1d9-0b0fd0d5d3c4",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const collectedAt = new Date().toISOString();\nconst runId = $('Create Ingestion Run').first().json.id;\n\nreturn $input\n  .all()\n  .filter(item => item.json.text?.trim())\n  .map(item => {\n    const review = item.json;\n\n    return {\n      json: {\n        run_id: runId,\n        record_id: `google_play_${review.reviewId}`,\n        product: \"Spotify\",\n        source: \"Google Play\",\n        source_url: review.url,\n        published_at: review.date,\n        rating: review.score,\n        country: \"IN\",\n        language: \"en\",\n        title: review.title ?? null,\n        text: review.text.trim(),\n        helpful_count: review.thumbsUp ?? 0,\n        app_version: review.version ?? null,\n        developer_reply: review.replyText ?? null,\n        developer_reply_at: review.replyDate ?? null,\n        collected_at: review.scrapedAt ?? collectedAt,\n        raw_review_id: review.reviewId\n      }\n    };\n  });"
+      },
+      "id": "bab2a247-e723-423b-9edd-596a8fcf5c52",
+      "name": "Normalize Reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -368
+      ],
+      "notesInFlow": true,
+      "notes": "Converts the scraper-specific response into the common review schema used by all future sources."
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "Ym7bHX6xafqNgFZgO",
+          "mode": "list",
+          "cachedResultName": "Google Play Store Scraper (automation-lab/google-play-scraper)",
+          "cachedResultUrl": "https://console.apify.com/actors/Ym7bHX6xafqNgFZgO/input"
+        },
+        "customBody": "{\n  \"mode\": \"reviews\",\n  \"appIds\": [\"com.spotify.music\"],\n  \"maxResults\": 300,\n  \"country\": \"in\",\n  \"language\": \"en\",\n  \"reviewSort\": \"newest\"\n}"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        -368
+      ],
+      "id": "cedaa291-6f18-40ca-9b78-21f145d8ae77",
+      "name": "Run an Actor and get dataset",
+      "alwaysOutputData": false,
+      "credentials": {
+        "apifyApi": {
+          "id": "Lmbx9qUeqOITrNGZ",
+          "name": "Apify account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "96ff0af1-6d8e-45bd-b4aa-ffb52185caf1",
+              "name": "appId",
+              "value": "com.spotify.music",
+              "type": "string"
+            },
+            {
+              "id": "976c14f8-dd0c-457c-b074-e33968eb3559",
+              "name": "pagesToScrape",
+              "value": 3,
+              "type": "number"
+            },
+            {
+              "id": "f2d152ef-956e-428b-904a-464101a68d61",
+              "name": "reviewsPerPage",
+              "value": 100,
+              "type": "number"
+            },
+            {
+              "id": "6dd28ce9-c288-4181-9f8c-94b620f59e4e",
+              "name": "maxReviews",
+              "value": 300,
+              "type": "number"
+            },
+            {
+              "id": "0ab8a466-a686-420b-9ea0-0e144b3efe4e",
+              "name": "uniqueOnly",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fc4804fb-baca-4a42-bb8a-ecf797d5011a",
+      "name": "Spotify Scrape Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -672,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.all().map(item => item.json);\n\nconst sourceCounts = reviews.reduce((counts, review) => {\n  const source = review.source || \"Unknown\";\n  counts[source] = (counts[source] || 0) + 1;\n  return counts;\n}, {});\n\n// Keep the report request small enough for Groq.\n// Maximum 25 reviews from each source.\nconst maxPerSource = 25;\nconst selectedBySource = {};\n\nfor (const review of reviews) {\n  const source = review.source || \"Unknown\";\n\n  if (!selectedBySource[source]) {\n    selectedBySource[source] = [];\n  }\n\n  if (selectedBySource[source].length < maxPerSource) {\n    selectedBySource[source].push(review);\n  }\n}\n\nconst selectedReviews = Object.values(selectedBySource).flat();\n\nconst reviewsText = selectedReviews\n  .map((review, index) => {\n    const rawText =\n      review.text ||\n      review.review_text ||\n      \"No review text available\";\n\n    // Prevent a few unusually long posts from consuming the request.\n    const shortenedText =\n      rawText.length > 600\n        ? `${rawText.slice(0, 600)}…`\n        : rawText;\n\n    return [\n      `Record ${index + 1}`,\n      `Source: ${review.source || \"Unknown\"}`,\n      `Rating: ${review.rating ?? \"Not available\"}`,\n      `Date: ${review.published_at || \"Not available\"}`,\n      review.community ? `Community: ${review.community}` : null,\n      review.title ? `Title: ${review.title}` : null,\n      `Text: ${shortenedText}`\n    ]\n      .filter(Boolean)\n      .join(\"\\n\");\n  })\n  .join(\"\\n\\n---\\n\\n\");\n\nreturn [\n  {\n    json: {\n      product: \"Spotify\",\n\n      // Counts from the complete scraped dataset.\n      total_record_count: reviews.length,\n      source_counts: sourceCounts,\n      source_scope: Object.keys(sourceCounts).join(\" and \"),\n\n      // Number actually supplied to the report model.\n      analysed_record_count: selectedReviews.length,\n      sampling_note:\n        `The report analyses up to ${maxPerSource} records per source. ` +\n        `Counts describe the complete dataset, while qualitative findings use the selected sample.`,\n\n      reviews_text: reviewsText\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -560
+      ],
+      "id": "9df6a790-ff4d-4d20-9b70-cdc94ec6ee49",
+      "name": "Prepare Reviews for AI"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nlet reportText = \"\";\n\n// Support outputs from Basic LLM Chain, Gemini, and similar model nodes.\nif (typeof input.text === \"string\") {\n  reportText = input.text;\n} else if (typeof input.output === \"string\") {\n  reportText = input.output;\n} else if (typeof input.response === \"string\") {\n  reportText = input.response;\n} else if (input.content?.parts?.[0]?.text) {\n  reportText = input.content.parts[0].text;\n} else {\n  reportText = JSON.stringify(input, null, 2);\n}\n\nreturn [\n  {\n    json: {\n      product: \"Spotify\",\n      source_scope: \"Google Play reviews and Reddit discussions\",\n      workflow_status: \"completed\",\n      generated_at: new Date().toISOString(),\n      report: reportText\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        -560
+      ],
+      "id": "268b6b93-ad9f-4593-956f-6d0b6e66bd49",
+      "name": "Format as Report"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "oAuCIx3ItNrs2okjQ",
+          "mode": "list",
+          "cachedResultName": "Reddit Scraper Lite (trudax/reddit-scraper-lite)",
+          "cachedResultUrl": "https://console.apify.com/actors/oAuCIx3ItNrs2okjQ/input"
+        },
+        "customBody": "{\n  \"searches\": [\n    \"recommendations\",\n    \"same songs\",\n    \"same artists\",\n    \"Discover Weekly\",\n    \"Daily Mix\",\n    \"music discovery\",\n    \"recommendation algorithm\",\n    \"new music\",\n    \"Smart Shuffle\",\n    \"Song Radio\"\n  ],\n  \"searchCommunityName\": \"truespotify\",\n  \"searchPosts\": true,\n  \"searchComments\": false,\n  \"sort\": \"relevance\",\n  \"time\": \"year\",\n  \"maxItems\": 50,\n  \"maxPostCount\": 40,\n  \"skipComments\": false,\n  \"maxComments\": 5,\n  \"includeNSFW\": false\n}"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        -176
+      ],
+      "id": "280692a5-a8b0-42ff-862a-551e96f09fbe",
+      "name": "Run an Actor and get dataset1",
+      "credentials": {
+        "apifyApi": {
+          "id": "Lmbx9qUeqOITrNGZ",
+          "name": "Apify account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const runId = $('Create Ingestion Run').first().json.id;\nconst items = $input.all();\n\nconst allowedCommunities = [\n  \"spotify\",\n  \"truespotify\",\n  \"spotifyplaylists\"\n];\n\nconst productFeatures = [\n  /discover weekly/i,\n  /release radar/i,\n  /daily mix/i,\n  /smart shuffle/i,\n  /song radio/i,\n  /spotify radio/i,\n  /daylist/i,\n  /autoplay/i,\n  /spotify dj/i,\n  /recommendation algorithm/i,\n  /spotify algorithm/i\n];\n\nconst discoveryProblems = [\n  /same songs?/i,\n  /same artists?/i,\n  /same tracks?/i,\n  /keeps? recommending/i,\n  /keeps? playing/i,\n  /repetitive recommendations?/i,\n  /recommendations? (are|is|feel|seem|gotten|became)/i,\n  /not recommending new music/i,\n  /can't discover/i,\n  /cannot discover/i,\n  /hard to discover/i,\n  /discover new music/i,\n  /recommendation fatigue/i,\n  /algorithm.*stuck/i,\n  /stuck.*algorithm/i,\n  /lack of variety/i,\n  /too mainstream/i,\n  /hidden gems?/i,\n  /niche artists?/i,\n  /new artists?/i,\n  /personalization/i,\n  /personalisation/i\n];\n\nfunction cleanText(value = \"\") {\n  return value\n    .replace(/<[^>]*>/g, \" \")\n    .replace(/&nbsp;|&#32;/g, \" \")\n    .replace(/&#39;/g, \"'\")\n    .replace(/&quot;/g, '\"')\n    .replace(/&amp;/g, \"&\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n}\n\nconst output = [];\n\nfor (const item of items) {\n  const raw = item.json;\n\n  const community = String(\n    raw.parsedCommunityName ||\n    raw.communityName ||\n    raw.subreddit ||\n    \"\"\n  )\n    .replace(/^r\\//i, \"\")\n    .toLowerCase();\n\n  // For MVP, only retain Spotify-focused communities\n  if (!allowedCommunities.includes(community)) continue;\n\n  const title = cleanText(raw.title || \"\");\n  const body = cleanText(\n    raw.body ||\n    raw.text ||\n    raw.selftext ||\n    raw.comment ||\n    \"\"\n  );\n\n  const rawId = String(\n  raw.id ||\n  raw.postId ||\n  raw.commentId ||\n  \"\"\n);\n\nconst rawType = String(\n  raw.dataType ||\n  raw.type ||\n  \"\"\n).toLowerCase();\n\nconst isComment =\n  rawType.includes(\"comment\") ||\n  rawId.startsWith(\"t1_\");\n\n// Ignore short, low-information comments\nif (isComment && body.length < 40) continue;\n\n// For comments, judge relevance only from the comment text.\n// Do not use the inherited parent-post title.\nconst relevanceText = isComment\n  ? body\n  : `${title} ${body}`;\n\nconst featureMatches = productFeatures.filter(pattern =>\n  pattern.test(relevanceText)\n).length;\n\nconst problemMatches = discoveryProblems.filter(pattern =>\n  pattern.test(relevanceText)\n).length;\n\n  // Must contain a Spotify discovery feature or a clear discovery problem\n  if (featureMatches === 0 && problemMatches === 0) continue;\n\n  // Avoid giant reposts/articles overwhelming the AI\n  const shortenedText =\n    body.length > 4000\n      ? `${body.slice(0, 4000)}...`\n      : body;\n\n  output.push({\n    json: {\n      run_id: runId,\n      record_id: `reddit_${\n        raw.id ||\n        raw.postId ||\n        raw.commentId ||\n        output.length + 1\n      }`,\n      product: \"Spotify\",\n      source: \"Reddit\",\n      source_url:\n        raw.url ||\n        raw.postUrl ||\n        raw.permalink ||\n        null,\n      published_at:\n        raw.createdAt ||\n        raw.date ||\n        null,\n      rating: null,\n      country: null,\n      language: \"en\",\n      title: title || null,\n      text: shortenedText,\n      community: `r/${community}`,\n      engagement:\n        raw.score ??\n        raw.upVotes ??\n        raw.upvotes ??\n        null,\n      data_type:\n        raw.dataType ||\n        raw.type ||\n        \"post\",\n      collected_at:\n        raw.scrapedAt ||\n        new Date().toISOString(),\n      relevance_signals:\n        featureMatches + problemMatches\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -176
+      ],
+      "id": "49e50f39-bc8d-40ef-86fb-4d82d008d3eb",
+      "name": "Filter & Normalize Reddit"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        0,
+        -272
+      ],
+      "id": "6f96189a-6f2f-4342-828b-a7da9502f842",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "tableId": "ingestion_runs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "requested_source",
+              "fieldValue": "all"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "started"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -896,
+        -272
+      ],
+      "id": "98344019-f97d-4d3e-8f17-01b574225648",
+      "name": "Create Ingestion Run",
+      "credentials": {
+        "supabaseApi": {
+          "id": "cTMRwYs8CfDWRqY7",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const review = item.json;\n\n  return {\n    json: {\n      run_id: review.run_id,\n      record_id: review.record_id,\n      product: review.product || \"Spotify\",\n      source: review.source,\n      source_url: review.source_url || null,\n\n      published_at: review.published_at || null,\n      collected_at: review.collected_at || new Date().toISOString(),\n\n      rating: review.rating ?? null,\n      country: review.country || null,\n      language: review.language || \"en\",\n\n      title: review.title || null,\n      review_text: review.text,\n\n      community: review.community || null,\n      helpful_count:\n        review.helpful_count ??\n        review.engagement ??\n        0,\n\n      app_version: review.app_version || null,\n      author: review.author || null,\n\n      metadata: {\n        raw_review_id: review.raw_review_id || null,\n        data_type: review.data_type || null,\n        relevance_signals: review.relevance_signals || null,\n        developer_reply: review.developer_reply || null,\n        developer_reply_at: review.developer_reply_at || null\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        32
+      ],
+      "id": "b4c25a30-63c6-4e30-b1dc-d1e6972ffa80",
+      "name": "Prepare Reviews for Database"
+    },
+    {
+      "parameters": {
+        "tableId": "reviews",
+        "dataToSend": "autoMapInputData"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        448,
+        32
+      ],
+      "id": "5c2d4e5b-4421-49b3-8e03-bc16498cc897",
+      "name": "Save Reviews to Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "cTMRwYs8CfDWRqY7",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const googlePlayScraped =\n  $('Run an Actor and get dataset').all().length;\n\nconst redditScraped =\n  $('Run an Actor and get dataset1').all().length;\n\nconst googlePlayStored =\n  $('Normalize Reviews').all().length;\n\nconst redditStored =\n  $('Filter & Normalize Reddit').all().length;\n\nconst classifications =\n  $('Flatten Classifications').all();\n\nconst reportOutput =\n  $('Format as Report').first().json;\n\nreturn [\n  {\n    json: {\n      run_id: $('Create Ingestion Run').first().json.id,\n      status: \"completed\",\n      completed_at: new Date().toISOString(),\n\n      raw_record_count:\n        googlePlayScraped + redditScraped,\n\n      relevant_record_count:\n        classifications.filter(\n          item => item.json.is_discovery_related === true\n        ).length,\n\n      classified_record_count:\n        classifications.length,\n\n      google_play_scraped: googlePlayScraped,\n      google_play_stored: googlePlayStored,\n\n      reddit_scraped: redditScraped,\n      reddit_stored: redditStored,\n\n      total_stored:\n        googlePlayStored + redditStored,\n\n      report:\n        reportOutput.report || null,\n\n      report_source_scope:\n        reportOutput.source_scope || null,\n\n      report_generated_at:\n        reportOutput.generated_at || null\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        -416
+      ],
+      "id": "5e0314bd-e35e-4374-9d12-fa510163b48e",
+      "name": "Build Run Summary"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "ingestion_runs",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.run_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $json.status }}"
+            },
+            {
+              "fieldId": "completed_at",
+              "fieldValue": "={{ $json.completed_at }}"
+            },
+            {
+              "fieldId": "raw_record_count",
+              "fieldValue": "={{ $json.raw_record_count }}"
+            },
+            {
+              "fieldId": "relevant_record_count",
+              "fieldValue": "={{ $json.relevant_record_count }}"
+            },
+            {
+              "fieldId": "google_play_scraped",
+              "fieldValue": "={{ $json.google_play_scraped }}"
+            },
+            {
+              "fieldId": "google_play_stored",
+              "fieldValue": "={{ $json.google_play_stored }}"
+            },
+            {
+              "fieldId": "reddit_scraped",
+              "fieldValue": "={{ $json.reddit_scraped }}"
+            },
+            {
+              "fieldId": "reddit_stored",
+              "fieldValue": "={{ $json.reddit_stored }}"
+            },
+            {
+              "fieldId": "total_stored",
+              "fieldValue": "={{ $json.total_stored }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2144,
+        -416
+      ],
+      "id": "1860e6b7-4aa5-489e-a326-a8c4e21c56f4",
+      "name": "Complete Ingestion Run",
+      "credentials": {
+        "supabaseApi": {
+          "id": "cTMRwYs8CfDWRqY7",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.all().map(item => item.json);\nconst batchSize = 10;\nconst batches = [];\n\nfor (let index = 0; index < reviews.length; index += batchSize) {\n  const batch = reviews.slice(index, index + batchSize);\n\n  batches.push({\n    json: {\n      run_id: $('Create Ingestion Run').first().json.id,\n      batch_number: Math.floor(index / batchSize) + 1,\n      total_batches: Math.ceil(reviews.length / batchSize),\n\n      reviews: batch.map(review => ({\n        record_id: review.record_id,\n        source: review.source,\n        rating: review.rating ?? null,\n        title: review.title ?? null,\n        text: review.review_text || review.text,\n        community: review.community ?? null\n      }))\n    }\n  });\n}\n\nreturn batches;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        32
+      ],
+      "id": "c5e886d5-c3d6-40d1-b201-2d3853909184",
+      "name": "Create Classification Batches"
+    },
+    {
+      "parameters": {
+        "text": "={{ JSON.stringify($json.reviews) }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"classifications\": {\n      \"type\": \"array\",\n      \"description\": \"One classification for every review supplied in the input batch.\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"record_id\": {\n            \"type\": \"string\",\n            \"description\": \"Copy the record_id exactly from the input.\"\n          },\n          \"is_discovery_related\": {\n            \"type\": \"boolean\",\n            \"description\": \"True only when the review discusses discovering music, recommendations, repetition, playlists, radio, mixes, artists, genres, novelty, relevance, or personalisation.\"\n          },\n          \"primary_theme\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"repetitive_recommendations\",\n              \"irrelevant_recommendations\",\n              \"lack_of_variety\",\n              \"genre_or_artist_lock_in\",\n              \"difficulty_discovering_new_music\",\n              \"playlist_or_radio_staleness\",\n              \"weak_user_control\",\n              \"too_much_unfamiliar_music\",\n              \"positive_discovery_experience\",\n              \"other_discovery_issue\",\n              \"not_discovery_related\"\n            ]\n          },\n          \"secondary_theme\": {\n            \"type\": \"string\",\n            \"description\": \"A secondary discovery theme, or none when no second theme is supported.\"\n          },\n          \"sentiment\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"negative\",\n              \"neutral\",\n              \"positive\",\n              \"mixed\"\n            ]\n          },\n          \"severity\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"low\",\n              \"medium\",\n              \"high\",\n              \"not_applicable\"\n            ]\n          },\n          \"user_segment\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"algorithm_dependent_listener\",\n              \"active_music_explorer\",\n              \"niche_genre_listener\",\n              \"familiarity_seeking_listener\",\n              \"control_seeking_listener\",\n              \"unclear\"\n            ]\n          },\n          \"evidence_quote\": {\n            \"type\": \"string\",\n            \"description\": \"A short exact phrase from the review supporting the classification. Use none when no useful phrase exists.\"\n          },\n          \"reasoning\": {\n            \"type\": \"string\",\n            \"description\": \"One concise sentence explaining the classification.\"\n          },\n          \"confidence\": {\n            \"type\": \"number\",\n            \"minimum\": 0,\n            \"maximum\": 1\n          }\n        },\n        \"required\": [\n          \"record_id\",\n          \"is_discovery_related\",\n          \"primary_theme\",\n          \"secondary_theme\",\n          \"sentiment\",\n          \"severity\",\n          \"user_segment\",\n          \"evidence_quote\",\n          \"reasoning\",\n          \"confidence\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"classifications\"\n  ],\n  \"additionalProperties\": false\n}",
+        "options": {
+          "systemPromptTemplate": "You are classifying public Spotify feedback for a product-management research project.\n\nClassify every input record exactly once.\n\nRules:\n\n1. Copy each record_id exactly. Never invent, shorten, merge, or omit IDs.\n\n2. Mark is_discovery_related as true only when the record contains meaningful evidence about:\n- music recommendations or recommendation relevance\n- repeated songs, artists, genres, playlists, mixes, radio, autoplay, or Smart Shuffle\n- discovering new or unfamiliar music\n- lack of variety or algorithmic staleness\n- personalisation of music discovery\n- control over familiar versus unfamiliar music\n\n3. General complaints about advertisements, subscription price, crashes, login, downloads, audio quality, lyrics, user interface, or account problems are not discovery-related unless the record explicitly connects them to music discovery or recommendations.\n\n4. Do not classify a record as discovery-related merely because the word Spotify, playlist, song, music, or algorithm appears.\n\n5. Use primary_theme = not_discovery_related whenever is_discovery_related is false.\n\n6. Use secondary_theme = none when no distinct secondary theme is clearly supported.\n\n7. Infer a behavioural user segment only from explicit behaviour in the record. Otherwise use unclear. Never infer age, gender, income, location, occupation, or other demographics.\n\n8. evidence_quote must be a brief exact phrase from the supplied record, not a paraphrase. Use none if no useful evidence exists.\n\n9. Severity:\n- high: the user indicates abandonment, cancellation, inability to use discovery, or persistent serious frustration\n- medium: a clear recurring problem or meaningful dissatisfaction\n- low: a minor complaint, suggestion, or limited inconvenience\n- not_applicable: not discovery-related or no problem is expressed\n\n10. Positive praise for discovering relevant unfamiliar music should use positive_discovery_experience.\n\n11. Base classifications only on the supplied text. Do not use outside knowledge.\n\n12. Return the same number of classifications as input reviews."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        32
+      ],
+      "id": "5295d1f0-c0a0-4765-bdf3-5173c00ea6e9",
+      "name": "Classify Review Batches"
+    },
+    {
+      "parameters": {
+        "jsCode": "const runId = $('Create Ingestion Run').first().json.id;\nconst flattened = [];\n\nfor (const item of $input.all()) {\n  const classifications =\n    item.json.classifications ||\n    item.json.output?.classifications ||\n    [];\n\n  for (const result of classifications) {\n    flattened.push({\n      json: {\n        run_id: runId,\n        record_id: result.record_id,\n\n        is_discovery_related: result.is_discovery_related,\n        primary_theme: result.primary_theme,\n\n        secondary_theme:\n          result.secondary_theme === \"none\"\n            ? null\n            : result.secondary_theme,\n\n        sentiment: result.sentiment,\n        severity: result.severity,\n        user_segment: result.user_segment,\n\n        evidence_quote:\n          result.evidence_quote === \"none\"\n            ? null\n            : result.evidence_quote,\n\n        classification_reasoning: result.reasoning,\n        classification_confidence: result.confidence\n      }\n    });\n  }\n}\n\nreturn flattened;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        -272
+      ],
+      "id": "2aec4385-26f9-4137-ad2d-2ff2434902bf",
+      "name": "Flatten Classifications"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "reviews",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "run_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.run_id }}"
+            },
+            {
+              "keyName": "record_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.record_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_discovery_related",
+              "fieldValue": "={{ $json.is_discovery_related }}"
+            },
+            {
+              "fieldId": "primary_theme",
+              "fieldValue": "={{ $json.primary_theme }}"
+            },
+            {
+              "fieldId": "secondary_theme",
+              "fieldValue": "={{ $json.secondary_theme }}"
+            },
+            {
+              "fieldId": "sentiment",
+              "fieldValue": "={{ $json.sentiment }}"
+            },
+            {
+              "fieldId": "severity",
+              "fieldValue": "={{ $json.severity }}"
+            },
+            {
+              "fieldId": "user_segment",
+              "fieldValue": "={{ $json.user_segment }}"
+            },
+            {
+              "fieldId": "evidence_quote",
+              "fieldValue": "={{ $json.evidence_quote }}"
+            },
+            {
+              "fieldId": "classification_reasoning",
+              "fieldValue": "={{ $json.classification_reasoning }}"
+            },
+            {
+              "fieldId": "classification_confidence",
+              "fieldValue": "={{ $json.classification_confidence }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1472,
+        -272
+      ],
+      "id": "154e0871-0e0a-4a3f-a1d3-231fc89a01d4",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "cTMRwYs8CfDWRqY7",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-8b-instant",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        256
+      ],
+      "id": "b4f2bb5e-5ca4-4f43-bdb8-92211cc618f5",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "skyCZvnQ1Y6LIhah",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        896,
+        32
+      ],
+      "id": "c49c3240-108f-4f23-85dc-d1373f6655be",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1472,
+        144
+      ],
+      "id": "6f502c2b-fbd1-4409-a6f9-4e6cc3480161",
+      "name": "Wait",
+      "webhookId": "d8e59ee1-5162-4509-8fc5-aa0406e27165"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are analysing public Spotify Google Play reviews for a product-management research project about music discovery and repetitive listening.\n\nAnalyse only the reviews provided below.\n\nRules:\n\n* Do not invent findings.\n* Separate general app complaints from music-discovery and recommendation issues.\n* Count a review as discovery-related only if it mentions recommendations, playlists, repeated songs, artists, genres, search, personalisation, radio, mixes, or discovering unfamiliar music.\n* Use behavioural segments only.\n* Do not infer demographics.\n* Include brief evidence quotes from the supplied reviews.\n* Clearly state when evidence is insufficient.\n* Mention that this is a small Google Play sample and is not representative of all Spotify users.\n\nReview count: {{ $json.review_count }}\nSource: {{ $json.source }}\n\nREVIEWS:\n\n{{ $json.reviews_text }}\n",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1120,
+        -672
+      ],
+      "id": "aea2c65e-e1cb-45bf-959e-cdd5600eb95c",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-8b-instant",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        -448
+      ],
+      "id": "5ce7f252-c4bd-449b-a384-1caf7703ce0d",
+      "name": "Groq Chat Model1",
+      "credentials": {
+        "groqApi": {
+          "id": "skyCZvnQ1Y6LIhah",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1696,
+        -416
+      ],
+      "id": "a08f5b56-b5bf-48b5-b190-e5995184d2ae",
+      "name": "Merge1"
+    }
+  ],
+  "pinData": {
+    "Build Run Summary": [
+      {
+        "json": {
+          "run_id": "e9de5450-f181-451b-9d36-78844f5ddce2",
+          "status": "completed",
+          "completed_at": "2026-06-27T20:44:07.368Z",
+          "raw_record_count": 65,
+          "relevant_record_count": 8,
+          "google_play_scraped": 25,
+          "google_play_stored": 25,
+          "reddit_scraped": 40,
+          "reddit_stored": 10,
+          "total_stored": 35
+        }
+      }
+    ],
+    "Manual Trigger": [
+      {
+        "json": {},
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Ingestion Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run an Actor and get dataset": {
+      "main": [
+        [
+          {
+            "node": "Normalize Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Spotify Scrape Config": {
+      "main": [
+        [
+          {
+            "node": "Run an Actor and get dataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reviews": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Reviews for AI": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format as Report": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Run an Actor and get dataset1": {
+      "main": [
+        [
+          {
+            "node": "Filter & Normalize Reddit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reviews for AI",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Reviews for Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Normalize Reddit": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Create Ingestion Run": {
+      "main": [
+        [
+          {
+            "node": "Spotify Scrape Config",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Run an Actor and get dataset1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Reviews for Database": {
+      "main": [
+        [
+          {
+            "node": "Save Reviews to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Reviews to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Create Classification Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Run Summary": {
+      "main": [
+        [
+          {
+            "node": "Complete Ingestion Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Classification Batches": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Review Batches": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Classifications": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify Review Batches",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Flatten Classifications",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Review Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Format as Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Build Run Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "c4c719c6-1d0d-4533-ab4d-200f1651faf1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e1669c7bbd761b891f95f329a3eab179a0dab1b8dccb3ef76bca92e6d5b0a538"
+  },
+  "nodeGroups": [],
+  "id": "XDerdo3JbTGadsDU",
+  "tags": []
+}
